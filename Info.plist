@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>TapText</string>
+    <key>CFBundleExecutable</key>
+    <string>taptext</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.taptext.cli</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>TapText</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>TapText captures system audio so it can transcribe it locally on this Mac.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>TapText uses ScreenCaptureKit to capture system audio for local transcription.</string>
+</dict>
+</plist>

@@ -1,0 +1,28 @@
+[package]
+name = "taptext"
+version = "0.1.0"
+edition = "2024"
+description = "Offline macOS system-audio transcription CLI"
+license = "MIT"
+rust-version = "1.96"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1.0.103"
+clap = { version = "4.6.1", features = ["derive"] }
+ctrlc = "3.5.2"
+screencapturekit = { version = "8", features = ["macos_26_0"] }
+sha2 = "0.11.0"
+time = { version = "0.3.53", features = ["formatting", "local-offset"] }
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[dev-dependencies]
+rstest = "0.26.1"
+tempfile = "3.27.0"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
+[lints.rust]
+unsafe_code = "deny"

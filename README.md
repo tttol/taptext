@@ -23,15 +23,13 @@ The executable is created at `target/release/taptext`.
 ```sh
 ./target/release/taptext
 ./target/release/taptext --output transcript.txt
-./target/release/taptext -w 5
-./target/release/taptext --window-seconds 10
 ```
 
-On the first launch, TapText asks before downloading the fixed, quantized English model into `~/Library/Caches/taptext/models/`. Later runs are completely offline.
+On the first launch, TapText asks before downloading the fixed, quantized English model and the Silero VAD model into `~/Library/Caches/taptext/models/`. Later runs are completely offline.
 
 macOS asks for Screen & System Audio Recording permission on the first capture. Grant access to TapText in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart the command if macOS requests it.
 
-Press `Ctrl+C` to stop. TapText finishes any remaining audio of at least half a second before closing the transcript. Existing output files are never overwritten.
+Press `Ctrl+C` to stop. TapText finalizes any detected speech before closing the transcript. Existing output files are never overwritten.
 
 Each line includes elapsed time:
 
@@ -39,7 +37,7 @@ Each line includes elapsed time:
 [00:00:05] Recognized English text.
 ```
 
-TapText uses a three-second recognition window by default and then transcribes once per second. Use `-w` or `--window-seconds` to select a window from 1 to 30 seconds. A longer window provides more speech context but increases the initial delay and inference cost. Each recognition result is written as one line without forced word-count wrapping.
+TapText uses Silero VAD to detect complete utterances. While speech is active, it refreshes a stable partial transcript in an interactive terminal about once per second. Only the final utterance is appended to the UTF-8 text file, so provisional corrections do not create duplicate lines. Continuous speech is split after 15 seconds with a short boundary guard.
 
 ## Limitations
 

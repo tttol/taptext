@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -15,31 +16,35 @@ use screencapturekit::{
     stream::{SCStream, delegate_trait::StreamCallbacks},
 };
 
-use crate::audio::{AudioChunk, AudioChunker};
+use crate::{
+    audio::{SAMPLE_RATE, UtteranceJob, VadSegmenter, VoiceActivityDetector},
+    vad::SileroVad,
+};
 
-const SAMPLE_RATE: usize = 16_000;
 const RAW_AUDIO_QUEUE_CAPACITY: usize = 256;
-const CHUNK_QUEUE_CAPACITY: usize = 2;
+const UTTERANCE_QUEUE_CAPACITY: usize = 4;
 
 pub(crate) struct CaptureSession {
     stream: Option<SCStream>,
-    chunks: Receiver<AudioChunk>,
+    jobs: Receiver<UtteranceJob>,
     worker: Option<JoinHandle<()>>,
     overloaded: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
 }
 
 impl CaptureSession {
-    pub(crate) fn start(window_seconds: u8) -> Result<Self> {
+    pub(crate) fn start(vad_model_path: &Path) -> Result<Self> {
+        let detector = SileroVad::load(vad_model_path)?;
         let (audio_sender, audio_receiver) = mpsc::sync_channel(RAW_AUDIO_QUEUE_CAPACITY);
-        let (chunk_sender, chunks) = mpsc::sync_channel(CHUNK_QUEUE_CAPACITY);
+        let (job_sender, jobs) = mpsc::sync_channel(UTTERANCE_QUEUE_CAPACITY);
         let overloaded = Arc::new(AtomicBool::new(false));
         let error = Arc::new(Mutex::new(None));
-        let worker = spawn_chunk_worker(
+        let worker = spawn_vad_worker(
             audio_receiver,
-            chunk_sender,
+            job_sender,
             Arc::clone(&overloaded),
-            window_seconds,
+            Arc::clone(&error),
+            detector,
         );
         let mut stream = create_stream(Arc::clone(&error))?;
         let handler_registered = stream.add_output_handler(
@@ -56,19 +61,19 @@ impl CaptureSession {
         }
         Ok(Self {
             stream: Some(stream),
-            chunks,
+            jobs,
             worker: Some(worker),
             overloaded,
             error,
         })
     }
 
-    pub(crate) fn receive(&self, timeout: Duration) -> Result<AudioChunk, RecvTimeoutError> {
-        self.chunks.recv_timeout(timeout)
+    pub(crate) fn receive(&self, timeout: Duration) -> Result<UtteranceJob, RecvTimeoutError> {
+        self.jobs.recv_timeout(timeout)
     }
 
-    pub(crate) fn try_receive(&self) -> Result<AudioChunk, TryRecvError> {
-        self.chunks.try_recv()
+    pub(crate) fn try_receive(&self) -> Result<UtteranceJob, TryRecvError> {
+        self.jobs.try_recv()
     }
 
     pub(crate) fn is_overloaded(&self) -> bool {
@@ -163,35 +168,45 @@ fn create_audio_handler(
     }
 }
 
-fn spawn_chunk_worker(
+fn spawn_vad_worker<D>(
     audio_receiver: Receiver<Vec<f32>>,
-    chunk_sender: SyncSender<AudioChunk>,
+    job_sender: SyncSender<UtteranceJob>,
     overloaded: Arc<AtomicBool>,
-    window_seconds: u8,
-) -> JoinHandle<()> {
+    error: Arc<Mutex<Option<String>>>,
+    detector: D,
+) -> JoinHandle<()>
+where
+    D: VoiceActivityDetector + Send + 'static,
+{
     thread::spawn(move || {
-        let mut chunker = AudioChunker::new(SAMPLE_RATE, window_seconds);
+        let mut segmenter = VadSegmenter::new(detector);
         for samples in audio_receiver {
-            let send_result = chunker
-                .push(&samples)
+            let jobs = match segmenter.push(&samples) {
+                Ok(jobs) => jobs,
+                Err(cause) => {
+                    record_error(&error, cause.to_string());
+                    return;
+                }
+            };
+            let send_result = jobs
                 .into_iter()
-                .try_for_each(|chunk| send_chunk(&chunk_sender, chunk, &overloaded));
+                .try_for_each(|job| send_job(&job_sender, job, &overloaded));
             if send_result.is_err() {
                 return;
             }
         }
-        if let Some(chunk) = chunker.flush() {
-            let _send_result = send_chunk(&chunk_sender, chunk, &overloaded);
+        if let Some(job) = segmenter.flush() {
+            let _send_result = send_job(&job_sender, job, &overloaded);
         }
     })
 }
 
-fn send_chunk(
-    sender: &SyncSender<AudioChunk>,
-    chunk: AudioChunk,
+fn send_job(
+    sender: &SyncSender<UtteranceJob>,
+    job: UtteranceJob,
     overloaded: &AtomicBool,
 ) -> Result<(), ()> {
-    match sender.try_send(chunk) {
+    match sender.try_send(job) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
             overloaded.store(true, Ordering::Release);

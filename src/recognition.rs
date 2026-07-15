@@ -5,13 +5,10 @@ use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
 };
 
-use crate::{
-    audio::AudioChunk,
-    transcript::{TimedToken, TranscriptLine, line_from_tokens},
-};
+use crate::transcript::filtered_text;
 
 pub(crate) trait Transcriber {
-    fn transcribe(&mut self, chunk: &AudioChunk) -> Result<Option<TranscriptLine>>;
+    fn transcribe(&mut self, samples: &[f32]) -> Result<Option<String>>;
 }
 
 pub(crate) struct WhisperTranscriber {
@@ -39,7 +36,7 @@ impl WhisperTranscriber {
 }
 
 impl Transcriber for WhisperTranscriber {
-    fn transcribe(&mut self, chunk: &AudioChunk) -> Result<Option<TranscriptLine>> {
+    fn transcribe(&mut self, samples: &[f32]) -> Result<Option<String>> {
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(self.threads);
         params.set_language(Some("en"));
@@ -48,9 +45,9 @@ impl Transcriber for WhisperTranscriber {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
-        params.set_token_timestamps(true);
+        params.set_token_timestamps(false);
         self.state
-            .full(params, &chunk.samples)
+            .full(params, samples)
             .context("Whisperの文字起こしに失敗しました")?;
         let tokens = self
             .state
@@ -58,21 +55,11 @@ impl Transcriber for WhisperTranscriber {
             .flat_map(|segment| {
                 (0..segment.n_tokens())
                     .filter_map(|index| segment.get_token(index))
-                    .map(|token| {
-                        let data = token.token_data();
-                        token.to_str_lossy().map(|text| TimedToken {
-                            start_centiseconds: data.t0,
-                            text: text.into_owned(),
-                        })
-                    })
+                    .map(|token| token.to_str_lossy().map(|text| text.into_owned()))
                     .collect::<Vec<_>>()
             })
             .collect::<Result<Vec<_>, _>>()
             .context("Whisperトークンを読み取れませんでした")?;
-        Ok(line_from_tokens(
-            chunk.start_centiseconds,
-            chunk.discard_before_centiseconds,
-            &tokens,
-        ))
+        Ok(filtered_text(tokens.iter().map(String::as_str)))
     }
 }

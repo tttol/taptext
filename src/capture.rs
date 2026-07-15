@@ -3,7 +3,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -17,7 +17,7 @@ use screencapturekit::{
 };
 
 use crate::{
-    audio::{SAMPLE_RATE, UtteranceJob, VadSegmenter, VoiceActivityDetector},
+    audio::{SAMPLE_RATE, UtteranceJob, UtteranceKind, VadSegmenter, VoiceActivityDetector},
     vad::SileroVad,
 };
 
@@ -72,10 +72,6 @@ impl CaptureSession {
         self.jobs.recv_timeout(timeout)
     }
 
-    pub(crate) fn try_receive(&self) -> Result<UtteranceJob, TryRecvError> {
-        self.jobs.try_recv()
-    }
-
     pub(crate) fn is_overloaded(&self) -> bool {
         self.overloaded.load(Ordering::Acquire)
     }
@@ -87,32 +83,49 @@ impl CaptureSession {
         )
     }
 
-    pub(crate) fn stop(&mut self) -> Result<()> {
-        let stop_result = self
-            .stream
+    pub(crate) fn stop_capture(&mut self) -> Result<()> {
+        self.stream
             .take()
             .map(|stream| {
                 let result = stream.stop_capture();
                 drop(stream);
                 result
             })
-            .transpose();
-        let join_result = self.worker.take().map(JoinHandle::join).transpose();
-        stop_result.context("システム音声の取得を停止できませんでした")?;
-        join_result.map_err(|_| anyhow::anyhow!("音声分割スレッドが異常終了しました"))?;
+            .transpose()
+            .context("システム音声の取得を停止できませんでした")?;
+        Ok(())
+    }
+
+    pub(crate) fn drain_jobs(
+        &self,
+        mut process: impl FnMut(&UtteranceJob) -> Result<()>,
+    ) -> Result<()> {
+        let mut first_error = None;
+        for job in &self.jobs {
+            if first_error.is_none()
+                && let Err(cause) = process(&job)
+            {
+                first_error = Some(cause);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    pub(crate) fn finish_worker(&mut self) -> Result<()> {
+        self.worker
+            .take()
+            .map(JoinHandle::join)
+            .transpose()
+            .map_err(|_| anyhow::anyhow!("音声分割スレッドが異常終了しました"))?;
         Ok(())
     }
 }
 
 impl Drop for CaptureSession {
     fn drop(&mut self) {
-        if let Some(stream) = self.stream.take() {
-            let _stop_result = stream.stop_capture();
-            drop(stream);
-        }
-        if let Some(worker) = self.worker.take() {
-            let _join_result = worker.join();
-        }
+        let _stop_result = self.stop_capture();
+        let _drain_result = self.drain_jobs(|_| Ok(()));
+        let _finish_result = self.finish_worker();
     }
 }
 
@@ -206,13 +219,16 @@ fn send_job(
     job: UtteranceJob,
     overloaded: &AtomicBool,
 ) -> Result<(), ()> {
-    match sender.try_send(job) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(_)) => {
-            overloaded.store(true, Ordering::Release);
-            Err(())
-        }
-        Err(TrySendError::Disconnected(_)) => Err(()),
+    match job.kind {
+        UtteranceKind::Final => sender.send(job).map_err(|_| ()),
+        UtteranceKind::Partial => match sender.try_send(job) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                overloaded.store(true, Ordering::Release);
+                Err(())
+            }
+            Err(TrySendError::Disconnected(_)) => Err(()),
+        },
     }
 }
 
@@ -255,9 +271,23 @@ fn permission_help() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex, atomic::AtomicBool, mpsc};
+
     use anyhow::Result;
 
-    use super::bytes_to_samples;
+    use crate::audio::{UtteranceJob, UtteranceKind};
+
+    use super::{CaptureSession, bytes_to_samples, send_job};
+
+    fn job(kind: UtteranceKind) -> UtteranceJob {
+        UtteranceJob {
+            id: 0,
+            kind,
+            start_sample: 0,
+            samples: Vec::new(),
+            deduplicate_prefix: false,
+        }
+    }
 
     #[test]
     fn converts_native_endian_float_audio() -> Result<()> {
@@ -286,5 +316,39 @@ mod tests {
 
         // THEN
         assert!(actual.is_err());
+    }
+
+    #[test]
+    fn drains_queued_partials_before_joining_worker_and_preserves_final() -> Result<()> {
+        // GIVEN
+        let (sender, jobs) = mpsc::sync_channel(1);
+        let overloaded = Arc::new(AtomicBool::new(false));
+        let worker_overloaded = Arc::clone(&overloaded);
+        let worker = std::thread::spawn(move || {
+            assert!(send_job(&sender, job(UtteranceKind::Partial), &worker_overloaded).is_ok());
+            assert!(send_job(&sender, job(UtteranceKind::Final), &worker_overloaded).is_ok());
+        });
+        let mut session = CaptureSession {
+            stream: None,
+            jobs,
+            worker: Some(worker),
+            overloaded,
+            error: Arc::new(Mutex::new(None)),
+        };
+        let expected = vec![UtteranceKind::Partial, UtteranceKind::Final];
+        let mut actual = Vec::new();
+
+        // WHEN
+        session.stop_capture()?;
+        session.drain_jobs(|job| {
+            actual.push(job.kind);
+            Ok(())
+        })?;
+        session.finish_worker()?;
+
+        // THEN
+        assert_eq!(actual, expected);
+        assert!(!session.is_overloaded());
+        Ok(())
     }
 }

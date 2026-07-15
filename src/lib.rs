@@ -60,14 +60,19 @@ pub fn execute(cli: Cli) -> Result<()> {
     eprintln!("保存先: {}", output_path.display());
     let mut session = CaptureSession::start(&models.vad)?;
     let capture_result = capture_loop(&session, &stop_requested, &mut processor);
-    let stop_result = session.stop();
+    let stop_result = session.stop_capture();
+    let drain_result = if capture_result.is_ok() {
+        session.drain_jobs(|job| processor.process(job))
+    } else {
+        session.drain_jobs(|_| Ok(()))
+    };
+    let finish_result = session.finish_worker();
     capture_result?;
     stop_result?;
+    drain_result?;
+    finish_result?;
     if session.is_overloaded() {
         bail!("文字起こし処理が音声入力に追いつかなかったため停止しました");
-    }
-    while let Ok(job) = session.try_receive() {
-        processor.process(&job)?;
     }
     eprintln!("文字起こしを保存しました: {}", output_path.display());
     Ok(())

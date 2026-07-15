@@ -13,16 +13,6 @@ use time::{OffsetDateTime, format_description};
 pub struct Cli {
     #[arg(short, long, value_name = "PATH", help = "文字起こしTXTの保存先")]
     pub(crate) output: Option<PathBuf>,
-
-    #[arg(
-        short = 'w',
-        long,
-        value_name = "SECONDS",
-        default_value_t = 3,
-        value_parser = clap::value_parser!(u8).range(1..=30),
-        help = "認識に使う音声窓の秒数（1〜30、更新間隔は1秒）"
-    )]
-    pub(crate) window_seconds: u8,
 }
 
 impl Cli {
@@ -73,29 +63,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case(&["taptext"], 3)]
-    #[case(&["taptext", "--window-seconds", "10"], 10)]
-    #[case(&["taptext", "-w", "5"], 5)]
-    fn parses_window_seconds(#[case] args: &[&str], #[case] expected: u8) -> Result<()> {
+    #[case(&["taptext", "-w", "5"])]
+    #[case(&["taptext", "--window-seconds", "10"])]
+    fn rejects_removed_window_options(#[case] args: &[&str]) {
         // GIVEN
 
         // WHEN
-        let actual = Cli::try_parse_from(args.iter().copied())?;
-
-        // THEN
-        assert_eq!(actual.window_seconds, expected);
-        Ok(())
-    }
-
-    #[rstest]
-    #[case("0")]
-    #[case("31")]
-    fn rejects_window_seconds_outside_supported_range(#[case] seconds: &str) {
-        // GIVEN
-        let args = ["taptext", "--window-seconds", seconds];
-
-        // WHEN
-        let actual = Cli::try_parse_from(args);
+        let actual = Cli::try_parse_from(args.iter().copied());
 
         // THEN
         assert!(actual.is_err());

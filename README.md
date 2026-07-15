@@ -23,6 +23,17 @@ The executable is created at `target/release/taptext`.
 ```sh
 ./target/release/taptext
 ./target/release/taptext --output transcript.txt
+./target/release/taptext --version
+```
+
+## Install
+
+Prebuilt binaries are available for Apple Silicon Macs running macOS 26 or later.
+
+```sh
+curl -LO https://github.com/tttol/taptext/releases/latest/download/taptext-aarch64-apple-darwin.tar.gz
+tar -xzf taptext-aarch64-apple-darwin.tar.gz
+./taptext --version
 ```
 
 On the first launch, TapText asks before downloading the fixed, quantized English model and the Silero VAD model into `~/Library/Caches/taptext/models/`. Later runs are completely offline.

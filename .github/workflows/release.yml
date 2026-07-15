@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate release tag and update version
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use the X.Y.Z format: ${tag}" >&2
+            exit 1
+          fi
+
+          git fetch --force origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/tags/${tag}:refs/tags/${tag}"
+
+          tag_ref="$(git rev-parse "refs/tags/${tag}")"
+          if [[ "$(git cat-file -t "${tag_ref}")" != "commit" ]]; then
+            echo "Release tags must be lightweight tags." >&2
+            exit 1
+          fi
+
+          tag_commit="${tag_ref}"
+          main_commit="$(git rev-parse refs/remotes/origin/main)"
+          if ! git merge-base --is-ancestor "${tag_commit}" "${main_commit}"; then
+            echo "Release tags must point to a commit on main." >&2
+            exit 1
+          fi
+
+          git checkout --detach "${tag_commit}"
+          version="${tag}"
+          current_version="$(sed -n '/^\[package\]$/,/^\[/{s/^version = "\([^"]*\)"$/\1/p;}' Cargo.toml)"
+
+          if [[ "${current_version}" == "${version}" ]]; then
+            release_commit="${tag_commit}"
+          else
+            if [[ "${tag_commit}" != "${main_commit}" ]]; then
+              echo "An unversioned release tag must point to the latest main commit." >&2
+              exit 1
+            fi
+
+            sed -i.bak -E '/^\[package\]$/,/^\[/{s/^version = "[^"]+"$/version = "'"${version}"'"/;}' Cargo.toml
+            rm Cargo.toml.bak
+            cargo check
+
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.toml Cargo.lock
+            git commit -m "chore: bump version to ${version}"
+            git push origin HEAD:main
+            release_commit="$(git rev-parse HEAD)"
+
+            git update-ref "refs/tags/${tag}" "${release_commit}"
+            git push --force-with-lease="refs/tags/${tag}:${tag_commit}" origin "refs/tags/${tag}"
+          fi
+
+          git checkout --detach "${release_commit}"
+          manifest_version="$(sed -n '/^\[package\]$/,/^\[/{s/^version = "\([^"]*\)"$/\1/p;}' Cargo.toml)"
+          lock_version="$(awk '
+            $0 == "[[package]]" {
+              package = 1
+              name = ""
+              version = ""
+              next
+            }
+            package && /^name = "/ {
+              name = $0
+              sub(/^name = "/, "", name)
+              sub(/"$/, "", name)
+            }
+            package && /^version = "/ {
+              version = $0
+              sub(/^version = "/, "", version)
+              sub(/"$/, "", version)
+            }
+            package && name == "taptext" && version != "" {
+              print version
+              exit
+            }
+          ' Cargo.lock)"
+          if [[ "${manifest_version}" != "${version}" || "${lock_version}" != "${version}" ]]; then
+            echo "Cargo.toml and Cargo.lock must match release version ${version}." >&2
+            exit 1
+          fi
+          cargo metadata --locked --no-deps --format-version 1 > /dev/null
+
+          echo "commit_sha=${release_commit}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Build release binary
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Package and verify release binary
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          artifact_name="taptext-aarch64-apple-darwin"
+          mkdir dist
+          cp target/aarch64-apple-darwin/release/taptext "dist/taptext"
+          tar -C dist -czf "dist/${artifact_name}.tar.gz" taptext
+          actual_version="$(dist/taptext --version)"
+          expected_version="taptext ${VERSION}"
+          if [[ "${actual_version}" != "${expected_version}" ]]; then
+            echo "Expected ${expected_version}, but got ${actual_version}." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ steps.prepare.outputs.commit_sha }}
+          files: dist/taptext-aarch64-apple-darwin.tar.gz
+          generate_release_notes: true

@@ -20,14 +20,22 @@ struct ModelSpec {
 const RECOGNITION_MODEL: ModelSpec = ModelSpec {
     label: "英語認識モデル",
     file_name: "ggml-base.en-q5_1.bin",
-    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/c521a4b02f422512d734391fdf08bb08c0862f68/ggml-base.en-q5_1.bin",
+    url: concat!(
+        "https://github.com/tttol/taptext/releases/download/",
+        env!("CARGO_PKG_VERSION"),
+        "/ggml-base.en-q5_1.bin"
+    ),
     sha256: "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
     approximate_size: "約60MB",
 };
 const VAD_MODEL: ModelSpec = ModelSpec {
     label: "VADモデル",
     file_name: "ggml-silero-v6.2.0.bin",
-    url: "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin",
+    url: concat!(
+        "https://github.com/tttol/taptext/releases/download/",
+        env!("CARGO_PKG_VERSION"),
+        "/ggml-silero-v6.2.0.bin"
+    ),
     sha256: "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
     approximate_size: "約1MB",
 };

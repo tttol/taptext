@@ -36,7 +36,11 @@ tar -xzf taptext-aarch64-apple-darwin.tar.gz
 ./taptext --version
 ```
 
-On the first launch, TapText asks before downloading the fixed, quantized English model and the Silero VAD model into `~/Library/Caches/taptext/models/`. Later runs are completely offline.
+On the first launch, TapText asks before downloading the fixed, quantized English model (about 60 MB) and the Silero VAD model (about 1 MB) from the GitHub Release matching its version into `~/Library/Caches/taptext/models/`. It verifies both files with SHA-256. Later runs are completely offline. The installed application does not need access to Hugging Face.
+
+If downloads are restricted, transfer `ggml-base.en-q5_1.bin` and `ggml-silero-v6.2.0.bin` from that release into the cache directory before launching TapText. Existing valid cached models are reused. Source builds with an empty cache need a published GitHub Release matching the version in `Cargo.toml`, or manually provisioned model files.
+
+Model attribution and licenses are included in [docs/MODEL-LICENSES.txt](docs/MODEL-LICENSES.txt) and published alongside the model assets.
 
 macOS asks for Screen & System Audio Recording permission on the first capture. Grant access to TapText in **System Settings > Privacy & Security > Screen & System Audio Recording**, then restart the command if macOS requests it.
 

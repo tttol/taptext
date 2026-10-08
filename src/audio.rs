@@ -77,8 +77,10 @@ where
         let step_count = self.pending.len() / ANALYSIS_STEP_SAMPLES;
         let processed_count = step_count * ANALYSIS_STEP_SAMPLES;
         let steps = self.pending[..processed_count]
-            .chunks_exact(ANALYSIS_STEP_SAMPLES)
-            .map(<[f32]>::to_vec)
+            .as_chunks::<ANALYSIS_STEP_SAMPLES>()
+            .0
+            .iter()
+            .map(|step| step.to_vec())
             .collect::<Vec<_>>();
         self.pending.drain(..processed_count);
         steps

@@ -146,10 +146,33 @@ jobs:
             exit 1
           fi
 
+      - name: Download and verify model assets
+        run: |
+          set -euo pipefail
+
+          curl --fail --location --retry 3 \
+            --output dist/ggml-base.en-q5_1.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/c521a4b02f422512d734391fdf08bb08c0862f68/ggml-base.en-q5_1.bin
+          curl --fail --location --retry 3 \
+            --output dist/ggml-silero-v6.2.0.bin \
+            https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin
+
+          cd dist
+          shasum -a 256 --check <<'CHECKSUMS'
+          4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f  ggml-base.en-q5_1.bin
+          2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987  ggml-silero-v6.2.0.bin
+          CHECKSUMS
+          cp ../docs/MODEL-LICENSES.txt .
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           target_commitish: ${{ steps.prepare.outputs.commit_sha }}
-          files: dist/taptext-aarch64-apple-darwin.tar.gz
+          files: |
+            dist/taptext-aarch64-apple-darwin.tar.gz
+            dist/ggml-base.en-q5_1.bin
+            dist/ggml-silero-v6.2.0.bin
+            dist/MODEL-LICENSES.txt
+          fail_on_unmatched_files: true
           generate_release_notes: true
